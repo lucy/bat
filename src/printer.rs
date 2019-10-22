@@ -139,28 +139,19 @@ impl<'a> InteractivePrinter<'a> {
             panel_width = 0;
         }
 
-        let mut line_changes = None;
-
-        let highlighter = if reader
-            .content_type
-            .map_or(false, |c| c.is_binary() && !config.show_nonprintable)
-        {
-            None
+        // Get the Git modifications
+        let line_changes = if config.output_components.changes() {
+            match file {
+                InputFile::Ordinary(filename) => get_git_diff(filename),
+                _ => None,
+            }
         } else {
-            // Get the Git modifications
-            line_changes = if config.output_components.changes() {
-                match file {
-                    InputFile::Ordinary(filename) => get_git_diff(filename),
-                    _ => None,
-                }
-            } else {
-                None
-            };
-
-            // Determine the type of syntax for highlighting
-            let syntax = assets.get_syntax(config.language, file, reader, &config.syntax_mapping);
-            Some(HighlightLines::new(syntax, theme))
+            None
         };
+
+        // Determine the type of syntax for highlighting
+        let syntax = assets.get_syntax(config.language, file, reader, &config.syntax_mapping);
+        let highlighter = Some(HighlightLines::new(syntax, theme));
 
         InteractivePrinter {
             panel_width,
@@ -222,24 +213,8 @@ impl<'a> InteractivePrinter<'a> {
 impl<'a> Printer for InteractivePrinter<'a> {
     fn print_header(&mut self, handle: &mut dyn Write, file: InputFile) -> Result<()> {
         if !self.config.output_components.header() {
-            if Some(ContentType::BINARY) == self.content_type && !self.config.show_nonprintable {
-                let input = match file {
-                    InputFile::Ordinary(filename) => format!("file '{}'", filename),
-                    _ => "STDIN".into(),
-                };
-
-                writeln!(
-                    handle,
-                    "{}: Binary content from {} will not be printed to the terminal \
-                     (but will be present if the output of 'bat' is piped). You can use 'bat -A' \
-                     to show the binary file contents.",
-                    Yellow.paint("[bat warning]"),
-                    input
-                )?;
-            } else {
-                if self.config.output_components.grid() {
-                    self.print_horizontal_line(handle, '┬')?;
-                }
+            if self.config.output_components.grid() {
+                self.print_horizontal_line(handle, '┬')?;
             }
             return Ok(());
         }
@@ -336,9 +311,9 @@ impl<'a> Printer for InteractivePrinter<'a> {
             replace_nonprintable(&line_buffer, self.config.tab_width)
         } else {
             match self.content_type {
-                Some(ContentType::BINARY) | None => {
-                    return Ok(());
-                }
+                None => return Ok(()),
+                Some(ContentType::BINARY) =>
+                    replace_nonprintable(&line_buffer, self.config.tab_width),
                 Some(ContentType::UTF_16LE) => UTF_16LE
                     .decode(&line_buffer, DecoderTrap::Replace)
                     .map_err(|_| "Invalid UTF-16LE")?,
